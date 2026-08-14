@@ -1,11 +1,11 @@
 [package]
 name = "motatool"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 rust-version = "1.74"
 description = "Build, verify, inspect, and serve MeshCore .mota firmware-update containers."
 license = "GPL-3.0-or-later"
-repository = "https://github.com/vk496/motatool"
+repository = "https://github.com/MeshEnvy/motatool"
 
 [[bin]]
 name = "motatool"

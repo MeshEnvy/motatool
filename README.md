@@ -1,5 +1,7 @@
 # motatool
 
+MeshEnvy fork of [vk496/motatool](https://github.com/vk496/motatool). Canonical tree is **`envyos/main`** on [MeshEnvy/motatool](https://github.com/MeshEnvy/motatool). Semver is EnvyOS `ENVYOS_VERSIONS` `motatool=` (this crate **0.1.1**). vk496 PRs are optional, not required.
+
 Build, verify, inspect, and serve **MeshCore `.mota` firmware-update containers**.
 
 A `.mota` is a signed, self-verifying package of a firmware update that [MeshCore](https://github.com/meshcore-dev/MeshCore)

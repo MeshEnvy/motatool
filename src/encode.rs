@@ -82,6 +82,11 @@ pub fn encode_in_place(from: &[u8], to: &[u8], memory_size: u32, segment_size: u
     let from_data = &from[..from.len().min(shifted_size)]; // base survives the shift only up to here
     let n_seg = to.len().div_ceil(seg);
 
+    // Every seg_from is a suffix of from_data, so one suffix array of from_data is enough:
+    // the SA of s[k..] is the SA of s filtered to positions ≥ k (relative order is unchanged).
+    let sa_full = suffix_array_with_sentinel(from_data);
+    let from_len = from_data.len();
+
     let mut segments = Vec::new();
     for s in 0..n_seg {
         let to_offset = s * seg;
@@ -89,7 +94,8 @@ pub fn encode_in_place(from: &[u8], to: &[u8], memory_size: u32, segment_size: u
         let seg_from: &[u8] = from_data.get(from_offset..).unwrap_or(&[]);
         let seg_to = &to[to_offset..(to_offset + seg).min(to.len())];
         segments.extend(pack_size(0)); // data-format = none, per segment
-        bsdiff(seg_from, seg_to, &mut segments);
+        let sa = suffix_array_for_offset(&sa_full, from_len, from_offset.min(from_len));
+        bsdiff_with_sa(seg_from, seg_to, &sa, &mut segments);
     }
 
     let mut patch = vec![(PATCH_TYPE_IN_PLACE << 4) | COMPRESSION_CRLE];
@@ -123,9 +129,14 @@ fn calc_shift(
 
 /// Append the bsdiff control/diff/extra stream for `from -> to` to `body`.
 fn bsdiff(from: &[u8], to: &[u8], body: &mut Vec<u8>) {
+    let sa = suffix_array_with_sentinel(from);
+    bsdiff_with_sa(from, to, &sa, body);
+}
+
+/// Same as [`bsdiff`] but reuses a precomputed suffix array of `from` (`I[0] == from.len()`).
+fn bsdiff_with_sa(from: &[u8], to: &[u8], sa: &[i64], body: &mut Vec<u8>) {
     let oldsize = from.len() as i64;
     let newsize = to.len() as i64;
-    let sa = suffix_array_with_sentinel(from); // I[0..=oldsize], I[0] = oldsize (empty suffix)
 
     let get = |v: &[u8], i: i64| -> u8 { v[i as usize] };
 
@@ -290,6 +301,22 @@ fn suffix_array_with_sentinel(s: &[u8]) -> Vec<i64> {
     i
 }
 
+/// Suffix array of `from[offset..]` derived from the SA of `from` (length `from_len`).
+///
+/// Suffixes of a suffix keep their relative order, so this is a filter + rebase — not a rebuild.
+fn suffix_array_for_offset(full_sa: &[i64], from_len: usize, offset: usize) -> Vec<i64> {
+    let slice_len = from_len.saturating_sub(offset);
+    let mut sa = Vec::with_capacity(slice_len + 1);
+    sa.push(slice_len as i64); // empty suffix of the slice
+    let off = offset as i64;
+    for &pos in full_sa.iter().skip(1) {
+        if pos >= off {
+            sa.push(pos - off);
+        }
+    }
+    sa
+}
+
 /// Plain suffix array of `s` (positions `0..s.len()` sorted by suffix), prefix-doubling, O(n log^2 n).
 fn suffix_array(s: &[u8]) -> Vec<i64> {
     let n = s.len();
@@ -447,5 +474,96 @@ mod tests {
         assert_eq!(out, vec![CRLE_SCATTERED, 3, 1, 2, 3]);
         let out = crle_compress(&[7u8; 6]);
         assert_eq!(out, vec![CRLE_REPEATED, 6, 7]);
+    }
+
+    /// Pre-optimization in-place path: rebuild the suffix array on every segment.
+    fn encode_in_place_naive(from: &[u8], to: &[u8], memory_size: u32, segment_size: u32) -> Vec<u8> {
+        let mem = memory_size as usize;
+        let seg = segment_size as usize;
+        assert!(seg > 0 && mem % seg == 0);
+        let minimum_shift = 2 * seg;
+        let shift_size = calc_shift(mem, seg, minimum_shift, from.len());
+        let shifted_size = mem - shift_size;
+        let from_data = &from[..from.len().min(shifted_size)];
+        let n_seg = to.len().div_ceil(seg);
+        let mut segments = Vec::new();
+        for s in 0..n_seg {
+            let to_offset = s * seg;
+            let from_offset = (to_offset + seg).saturating_sub(shift_size);
+            let seg_from: &[u8] = from_data.get(from_offset..).unwrap_or(&[]);
+            let seg_to = &to[to_offset..(to_offset + seg).min(to.len())];
+            segments.extend(pack_size(0));
+            bsdiff(seg_from, seg_to, &mut segments);
+        }
+        let mut patch = vec![(PATCH_TYPE_IN_PLACE << 4) | COMPRESSION_CRLE];
+        patch.extend(pack_size(mem as i64));
+        patch.extend(pack_size(seg as i64));
+        patch.extend(pack_size(shift_size as i64));
+        patch.extend(pack_size(from.len() as i64));
+        patch.extend(pack_size(to.len() as i64));
+        if to.is_empty() {
+            return patch;
+        }
+        patch.extend(crle_compress(&segments));
+        patch
+    }
+
+    fn prng(seed: u64, n: usize) -> Vec<u8> {
+        let mut z = seed;
+        (0..n)
+            .map(|_| {
+                z = z.wrapping_add(0x9E37_79B9_7F4A_7C15);
+                let mut x = z;
+                x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+                x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+                (x ^ (x >> 31)) as u8
+            })
+            .collect()
+    }
+
+    #[test]
+    fn suffix_array_of_a_suffix_matches_rebuild() {
+        let s = prng(7, 4096);
+        let full = suffix_array_with_sentinel(&s);
+        for offset in [0usize, 1, 17, 256, 4095, 4096] {
+            let slice = s.get(offset..).unwrap_or(&[]);
+            let derived = suffix_array_for_offset(&full, s.len(), offset.min(s.len()));
+            let rebuilt = suffix_array_with_sentinel(slice);
+            assert_eq!(derived, rebuilt, "offset {offset}");
+        }
+    }
+
+    #[test]
+    fn in_place_shared_sa_matches_naive_bytes() {
+        // The on-wire patch must stay byte-identical to the per-segment SA rebuild.
+        let cases: Vec<(Vec<u8>, Vec<u8>, u32, u32)> = vec![
+            (vec![], vec![], 8192, 4096),
+            (prng(1, 0), prng(2, 64), 4096, 256),
+            (prng(3, 1000), vec![], 4096, 256),
+            (prng(4, 512), prng(5, 512), 4096, 256),
+            {
+                let b = prng(6, 8000);
+                let mut t = b.clone();
+                for k in [10usize, 2000, 4000, 7999] {
+                    t[k] ^= 0x33;
+                }
+                (b, t, 0x8000, 4096)
+            },
+            {
+                let n = 20_000usize;
+                let b = prng(42 + n as u64, n);
+                let mut t = b.clone();
+                for k in [0usize, 3, 4, n / 3, n / 2, n - 1] {
+                    t[k] ^= 0x5A;
+                }
+                let mem = (((b.len() + t.len()).div_ceil(256)) + 2) as u32 * 256;
+                (b, t, mem, 256)
+            },
+        ];
+        for (i, (from, to, mem, seg)) in cases.into_iter().enumerate() {
+            let fast = encode_in_place(&from, &to, mem, seg);
+            let naive = encode_in_place_naive(&from, &to, mem, seg);
+            assert_eq!(fast, naive, "case {i} patch bytes diverged");
+        }
     }
 }

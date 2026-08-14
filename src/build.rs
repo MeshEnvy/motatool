@@ -47,9 +47,12 @@ pub fn build(o: &BuildOpts) -> Result<Built> {
 
     // Full: the payload IS the image. Delta: the payload is a detools patch base_image -> image, and
     // base_hash pins the running image it applies to (the device checks it against its EndF body_hash).
-    let (codec, payload, base_hash) = match &o.base {
-        None => (Codec::Full, image.clone(), [0u8; 8]),
-        Some(base_fw) => build_delta(o, &ident, &image, base_fw)?,
+    let (codec, payload, base_hash, base_ident) = match &o.base {
+        None => (Codec::Full, image.clone(), [0u8; 8], None),
+        Some(base_fw) => {
+            let (codec, payload, base_hash, base_ident) = build_delta(o, &ident, &image, base_fw)?;
+            (codec, payload, base_hash, Some(base_ident))
+        }
     };
     let is_full = codec == Codec::Full;
 
@@ -98,7 +101,7 @@ pub fn build(o: &BuildOpts) -> Result<Built> {
     bytes.extend_from_slice(&TRAILER);
 
     let manifest = Manifest::parse(&bytes)?; // our own output must parse
-    let suggested_name = suggested_name(&ident, codec, &root);
+    let suggested_name = suggested_name(&ident, codec, &root, base_ident.as_ref(), &base_hash);
     Ok(Built {
         bytes,
         suggested_name,
@@ -113,7 +116,7 @@ fn build_delta(
     ident: &FwIdent,
     image: &[u8],
     base_fw: &[u8],
-) -> Result<(Codec, Vec<u8>, [u8; 8])> {
+) -> Result<(Codec, Vec<u8>, [u8; 8], FwIdent)> {
     // The delta must apply to the device's *actual* running image, which carries its own EndF trailer.
     // Requiring one here stops a silently-wrong patch built against a re-stamped base (it would fail the
     // on-device base_hash check anyway, but failing early is clearer).
@@ -144,7 +147,7 @@ fn build_delta(
                 bail!("in-place: --segment-size must be non-zero");
             }
             let stage_ceiling = targets::nrf52_stage_ceiling_for_target(ident.target_id);
-            let memory_size = match o.inplace_memory {
+            let patch = match o.inplace_memory {
                 Some(m) => {
                     if m == 0 || m % o.segment_size != 0 {
                         bail!(
@@ -152,28 +155,23 @@ fn build_delta(
                             o.segment_size
                         );
                     }
-                    m
+                    crate::encode::encode_in_place(&base_image, image, m, o.segment_size)
                 }
-                None => compute_inplace_memory(
-                    &base_image,
-                    image,
-                    stage_ceiling,
-                    o.segment_size,
-                    o.block_size,
-                )?,
+                None => {
+                    compute_inplace_memory(
+                        &base_image,
+                        image,
+                        stage_ceiling,
+                        o.segment_size,
+                        o.block_size,
+                    )?
+                    .1
+                }
             };
-            (
-                Codec::DetoolsInplace,
-                crate::encode::encode_in_place(
-                    &base_image,
-                    image,
-                    memory_size,
-                    o.segment_size,
-                ),
-            )
+            (Codec::DetoolsInplace, patch)
         }
     };
-    Ok((codec, patch, base_hash))
+    Ok((codec, patch, base_hash, base_ident))
 }
 
 /// Derive the in-place apply window from the target's staging ceiling and the patch size. Iterates
@@ -184,7 +182,7 @@ fn compute_inplace_memory(
     stage_ceiling: u32,
     segment_size: u32,
     block_size: u32,
-) -> Result<u32> {
+) -> Result<(u32, Vec<u8>)> {
     let to_len = to.len() as u32;
     let max_memory = stage_ceiling - NRF52_APP_BASE;
     if to_len > max_memory {
@@ -218,7 +216,7 @@ fn compute_inplace_memory(
             segment_size,
         );
         if new_memory == memory {
-            return Ok(memory);
+            return Ok((memory, patch));
         }
         memory = new_memory.max(segment_size);
     }
@@ -230,18 +228,38 @@ fn block_size_log2(bs: u32) -> u8 {
     (u32::BITS - 1 - bs.max(1).leading_zeros()) as u8
 }
 
-/// `<hw|fw>_<target8>_v<version>_<full|seqdelta|ipdelta>_<mid8>.mota`
-fn suggested_name(ident: &FwIdent, codec: Codec, root: &[u8; 4]) -> String {
+/// Full: `{hw}_{TARGET8}_v{ver}_full_{mid8}.mota`
+/// Delta: `{hw}_{TARGET8}_v{ver}_{seqdelta|ipdelta}_from_v{basever}_{basehash16}.mota`
+///
+/// `mid8` is the payload merkle root (this `.mota`). `basehash16` is EndF `body_hash`
+/// (same 8 bytes as the manifest `base_hash` / `motatool inspect`).
+fn suggested_name(
+    ident: &FwIdent,
+    codec: Codec,
+    root: &[u8; 4],
+    base_ident: Option<&FwIdent>,
+    base_hash: &[u8; 8],
+) -> String {
     let hw = if ident.hw_id.is_empty() {
         "fw"
     } else {
         ident.hw_id.as_str()
     };
-    format!(
-        "{hw}_{:08X}_v{}_{}_{}.mota",
-        ident.target_id,
-        version_str(ident.fw_version),
-        codec.name_tag(),
-        hex::encode_upper(root)
-    )
+    match base_ident {
+        None => format!(
+            "{hw}_{:08X}_v{}_{}_{}.mota",
+            ident.target_id,
+            version_str(ident.fw_version),
+            codec.name_tag(),
+            hex::encode_upper(root)
+        ),
+        Some(base) => format!(
+            "{hw}_{:08X}_v{}_{}_from_v{}_{}.mota",
+            ident.target_id,
+            version_str(ident.fw_version),
+            codec.name_tag(),
+            version_str(base.fw_version),
+            hex::encode_upper(base_hash)
+        ),
+    }
 }
