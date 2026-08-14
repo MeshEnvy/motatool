@@ -19,6 +19,8 @@ fn a_mota() -> Vec<u8> {
         sign_seed: None,
         block_size: 1024,
         force: false,
+        name_stem: None,
+        base_version: None,
     })
     .unwrap()
     .bytes

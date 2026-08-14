@@ -102,6 +102,12 @@ struct BuildArgs {
     /// Exact output path (overrides --out-dir and the auto-name).
     #[arg(long)]
     out: Option<String>,
+    /// Filename prefix, e.g. `fw-rak4631-repeater-slim-v0.2.0` → `…-full-{mid8}.mota`.
+    #[arg(long = "name-stem")]
+    name_stem: Option<String>,
+    /// Release version of `--base` for the delta filename (e.g. `v0.1.2`). Defaults to EndF.
+    #[arg(long = "base-version")]
+    base_version: Option<String>,
 }
 
 #[derive(Args)]
@@ -212,6 +218,8 @@ fn cmd_build(a: BuildArgs) -> Result<()> {
         sign_seed,
         block_size: a.block_size,
         force: a.force,
+        name_stem: a.name_stem,
+        base_version: a.base_version,
     })?;
 
     // sanity: our own output must verify.

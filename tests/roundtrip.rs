@@ -24,6 +24,8 @@ fn opts(fw: Vec<u8>) -> BuildOpts {
         sign_seed: None,
         block_size: 1024,
         force: false,
+        name_stem: None,
+        base_version: None,
     }
 }
 
@@ -43,7 +45,7 @@ fn full_build_verifies_and_roundtrips() {
     assert_eq!(m.block_count, 3); // 2500 + 56-byte EndF = 2556 → ceil(/1024) = 3
     assert!(built
         .suggested_name
-        .starts_with("RAK4631_04D413FD_v1.17.0_full_"));
+        .starts_with("fw-RAK4631-v1.17.0-full-"));
     assert!(built.suggested_name.ends_with(".mota"));
 }
 

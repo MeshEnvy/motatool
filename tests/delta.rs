@@ -47,6 +47,8 @@ fn opts(new_fw: Vec<u8>, base_fw: Vec<u8>, ptype: PatchType) -> BuildOpts {
         sign_seed: None,
         block_size: 1024,
         force: false,
+        name_stem: None,
+        base_version: None,
     }
 }
 
@@ -126,6 +128,12 @@ fn delta_suggested_name_tags_the_codec() {
     }
     let (base_body, tgt_body) = base_and_target();
     let (base_image, _) = ensure_endf(&base_body, &ident());
+    let leaves = motatool::merkle::leaf_hashes(&base_image, 1024);
+    let base8 = motatool::merkle::root(&leaves)
+        .iter()
+        .map(|b| format!("{b:02X}"))
+        .collect::<String>();
+    let from = format!("-delta-from-v1.17.0-{base8}.mota");
     let seq = build(&opts(
         tgt_body.clone(),
         base_image.clone(),
@@ -133,14 +141,10 @@ fn delta_suggested_name_tags_the_codec() {
     ))
     .unwrap();
     assert!(
-        seq.suggested_name.contains("_seqdelta_"),
+        seq.suggested_name.ends_with(&from),
         "{}",
         seq.suggested_name
     );
     let ip = build(&opts(tgt_body, base_image, PatchType::InPlace)).unwrap();
-    assert!(
-        ip.suggested_name.contains("_ipdelta_"),
-        "{}",
-        ip.suggested_name
-    );
+    assert!(ip.suggested_name.ends_with(&from), "{}", ip.suggested_name);
 }
