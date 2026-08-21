@@ -2,6 +2,16 @@
 
 MeshEnvy motatool. Upstream origin: [vk496/motatool](https://github.com/vk496/motatool). Do not copy upstream notes here.
 
+## [Unreleased]
+
+### Changed
+
+- Sync `src/targets.rs` with firmware OTA env table (cache/storage slugs; drop `*_superseeder`).
+
+### Improved
+
+- `motatool serve -v`: split `[host]` (seeder protocol) vs `[tag]` (firmware serial); `DESCRIBE` logs mid/target/version/codec for each registered index.
+
 ## [0.1.1] - 2026-08-14
 
 Declared MeshEnvy-canonical (`repository` → MeshEnvy/motatool). Binary name unchanged.

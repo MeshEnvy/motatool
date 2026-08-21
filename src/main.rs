@@ -422,7 +422,7 @@ fn cmd_serve(a: ServeArgs) -> Result<()> {
         eprintln!("  ! skip {} : {why}", p.display());
     });
     println!(
-        "motatool serve: {} valid .mota in {}{}",
+        "[host] motatool serve: {} valid .mota in {}{}",
         folder.count(),
         a.dir,
         if a.no_recursive { "" } else { " (recursive)" }
@@ -430,7 +430,7 @@ fn cmd_serve(a: ServeArgs) -> Result<()> {
     for s in folder.all() {
         let m = &s.manifest;
         println!(
-            "  - {} : mid={} target={:08X} [{}] v{} {} {} blocks={} size={}",
+            "[host]   - {} : mid={} target={:08X} [{}] v{} {} {} blocks={} size={}",
             s.path.file_name().unwrap_or_default().to_string_lossy(),
             hex::encode_upper(m.merkle_root),
             m.target_id,
@@ -454,7 +454,7 @@ fn cmd_serve(a: ServeArgs) -> Result<()> {
         let m = Manifest::parse(&bytes).context("bad seed .mota")?;
         let payload = bytes[m.payload_off()..m.payload_off() + m.payload_size as usize].to_vec();
         println!(
-            "seed: {} mid={} blocks={} payload={} (staged into each capture for `ota pull … validate`)",
+            "[host] seed: {} mid={} blocks={} payload={} (staged into each capture for `ota pull … validate`)",
             Path::new(seed_path).file_name().unwrap_or_default().to_string_lossy(),
             hex::encode_upper(m.merkle_root),
             m.block_count,
@@ -488,22 +488,26 @@ fn cmd_serve(a: ServeArgs) -> Result<()> {
     let enable = !use_tcp && !a.no_enable;
     if enable {
         let _ = link.write_all(b"ota folder on\r\n");
-        println!("sent `ota folder on`");
+        println!("[host] sent `ota folder on` to tag");
     }
-    println!("serving on {target} — Ctrl-C to stop");
+    println!("[host] serving on {target} — Ctrl-C to stop");
+    if a.verbose {
+        println!("[host] verbose: seeder protocol traces below; `[tag]` = firmware serial text");
+    }
 
     serve_loop(
         &mut *link,
         &core,
         a.verbose,
-        |l| println!("  [dev] {l}"),
+        |l| println!("[tag] {l}"),
+        |l| println!("[host] {l}"),
         &stop,
     );
 
     if enable {
         let _ = link.write_all(b"ota folder off\r\n");
     }
-    println!("\nbye");
+    println!("[host] bye");
     Ok(())
 }
 

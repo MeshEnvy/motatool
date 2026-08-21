@@ -84,7 +84,8 @@ It does two things at once on that one link:
 `.part`, so `ota pull <#> folder validate` on the node diffs it against the target's authenticated merkle
 leaves and pulls only the **differing** blocks over LoRa — a byte-exact capture in seconds instead of a full
 slow transfer. Other flags: `--baud` (serial speed), `--no-recursive` (don't descend into sub-folders),
-`--no-enable` (don't auto-send `ota folder on`/`off` on the serial console), `-v` (log each request).
+`--no-enable` (don't auto-send `ota folder on`/`off` on the serial console), `-v` (log seeder
+protocol as `[host]`; tag serial text as `[tag]`).
 
 The transport is decoupled from the protocol (a `SeederCore` turns each `(op, args)` request into a reply,
 framed separately for serial/TCP), so the same core could back a future BLE/GATT path.

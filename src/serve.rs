@@ -4,7 +4,9 @@
 //! Split into a transport-agnostic [`SeederCore`] (turns a `(op, args)` request into a `(status, payload)`
 //! reply — a future BLE/GATT path would call it directly) and a byte-stream [`serve_loop`] that frames it.
 
-use crate::format::{rd_u32, seeder, Manifest, HEADER_LEN, MAGIC, MFL};
+use crate::endf::version_str;
+use crate::format::{rd_u32, seeder, Codec, Manifest, HEADER_LEN, MAGIC, MFL};
+use crate::targets;
 use crate::verify::verify;
 use anyhow::{Context, Result};
 use std::io::{ErrorKind, Read, Write};
@@ -340,12 +342,14 @@ fn send_response(link: &mut dyn Link, op: u8, status: u8, payload: &[u8]) {
 }
 
 /// Run the seeder framing loop until `stop` is set: resync on `M S`, verify the request, dispatch to
-/// `core`, frame the reply. Interleaved device text/log lines (serial only) are surfaced via `devline`.
+/// `core`, frame the reply. Tag text on the shared serial console goes to `on_tag_line`; motatool
+/// seeder-protocol traces (`-v`) go to `on_host_line`.
 pub fn serve_loop(
     link: &mut dyn Link,
     core: &SeederCore,
     verbose: bool,
-    mut devline: impl FnMut(&str),
+    mut on_tag_line: impl FnMut(&str),
+    mut on_host_line: impl FnMut(&str),
     stop: &AtomicBool,
 ) {
     let mut prev: Option<u8> = None;
@@ -364,7 +368,7 @@ pub fn serve_loop(
                 if let Some((status, payload)) = core.handle(op, &args) {
                     send_response(link, op, status, &payload);
                     if verbose {
-                        log_request(&mut devline, op, &args, status, &payload);
+                        log_request(&mut on_host_line, op, &args, status, &payload);
                     }
                 }
             }
@@ -375,32 +379,54 @@ pub fn serve_loop(
         if let Some(p) = prev {
             line.push(p as char);
             if p == b'\n' || line.len() > 512 {
-                flush_line(&mut line, &mut devline);
+                flush_line(&mut line, &mut on_tag_line);
             }
         }
         prev = Some(b);
     }
 }
 
-fn flush_line(line: &mut String, devline: &mut impl FnMut(&str)) {
+fn flush_line(line: &mut String, on_tag_line: &mut impl FnMut(&str)) {
     let trimmed = line.trim_end_matches(['\r', '\n']);
     if !trimmed.is_empty() {
-        devline(trimmed);
+        on_tag_line(trimmed);
     }
     line.clear();
 }
 
-fn log_request(devline: &mut impl FnMut(&str), op: u8, args: &[u8], status: u8, payload: &[u8]) {
+fn log_request(on_host_line: &mut impl FnMut(&str), op: u8, args: &[u8], status: u8, payload: &[u8]) {
     let ok = if status == seeder::STATUS_OK {
         "OK"
     } else {
         "ERR"
     };
     let msg = match op {
-        seeder::OP_COUNT => format!("COUNT -> {}", payload.first().copied().unwrap_or(0)),
-        seeder::OP_DESCRIBE => format!("DESCRIBE {} {ok}", args[0]),
-        seeder::OP_READ => format!("READ {} @{} {ok}", args[0], rd_u32(args, 1)),
+        seeder::OP_COUNT => format!("COUNT -> {} mota(s) in folder", payload.first().copied().unwrap_or(0)),
+        seeder::OP_DESCRIBE => {
+            if status == seeder::STATUS_OK && payload.len() >= seeder::DESC_WIRE {
+                let idx = args.first().copied().unwrap_or(0);
+                let mid = hex::encode_upper(&payload[0..4]);
+                let target = rd_u32(payload, 4);
+                let fw = rd_u32(payload, 8);
+                let codec = Codec::from_u8(payload[12])
+                    .map(Codec::label)
+                    .unwrap_or("?");
+                format!(
+                    "DESCRIBE idx={idx} {ok} mid={mid} target={target:08X} [{}] v{} {codec}",
+                    targets::label(target),
+                    version_str(fw),
+                )
+            } else {
+                format!("DESCRIBE idx={} {ok}", args.first().copied().unwrap_or(0))
+            }
+        }
+        seeder::OP_READ => format!(
+            "READ idx={} @{} len={} {ok}",
+            args.first().copied().unwrap_or(0),
+            rd_u32(args, 1),
+            u16::from_le_bytes([args[5], args[6]])
+        ),
         _ => return, // storage ops: quiet unless it matters
     };
-    devline(&msg);
+    on_host_line(&msg);
 }
