@@ -1,6 +1,6 @@
 # motatool
 
-MeshEnvy fork of [vk496/motatool](https://github.com/vk496/motatool). Canonical tree is **`envyos/main`** on [MeshEnvy/motatool](https://github.com/MeshEnvy/motatool). Semver is EnvyOS `ENVYOS_VERSIONS` `motatool=` (this crate **0.1.1**). vk496 PRs are optional, not required.
+MeshEnvy fork of [vk496/motatool](https://github.com/vk496/motatool). Canonical tree is **`envyos/main`** on [MeshEnvy/motatool](https://github.com/MeshEnvy/motatool). Releases are cut here (see [`CHANGELOG.md`](CHANGELOG.md), [`docs/change-management.md`](docs/change-management.md)); EnvyOS [`ENVYOS_VERSIONS`](https://github.com/MeshEnvy/envyos) pins the semver the bench bundles. vk496 PRs are optional, not required.
 
 Build, verify, inspect, and serve **MeshCore `.mota` firmware-update containers**.
 
@@ -27,8 +27,17 @@ The full feature set of the old C++ tool, plus pure-Rust delta encoding (which t
 
 ```sh
 cargo build --release      # -> target/release/motatool   (pure Rust; no Python/detools needed)
-cargo test                 # unit + round-trip tests
+cargo test --locked        # unit + round-trip tests
 make dev-setup             # OPTIONAL: build the detools test oracle so the delta tests run (see Deltas)
+```
+
+## Releases
+
+Tagged releases publish Linux and macOS binaries to [GitHub Releases](https://github.com/MeshEnvy/motatool/releases). User-facing notes live in [`CHANGELOG.md`](CHANGELOG.md). Cut workflow: [`.cursor/skills/motatool-release/SKILL.md`](.cursor/skills/motatool-release/SKILL.md).
+
+```sh
+./scripts/changelog.sh check v0.1.2   # before tagging
+git tag v0.1.2 && git push meshenvy v0.1.2
 ```
 
 The shipped binary has **no Python or detools dependency** for anything — `make dev-setup` is only needed to
