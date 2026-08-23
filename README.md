@@ -40,6 +40,17 @@ Tagged releases publish Linux and macOS binaries to [GitHub Releases](https://gi
 git tag v0.1.2 && git push meshenvy v0.1.2
 ```
 
+## Seeder (USB)
+
+Serve a folder of `.mota` files to a tag over serial:
+
+```sh
+./scripts/seeder.sh /dev/cu.usbmodem1444301
+./scripts/seeder.sh usbmodem1444301 ./path/to/motas/v0.1.2
+```
+
+Requires `motatool` on PATH (release install or `cargo build --release`). Override with `MOTATOOL=/path/to/motatool`.
+
 The shipped binary has **no Python or detools dependency** for anything — `make dev-setup` is only needed to
 run the delta correctness tests, which decode our patches with the real detools decoder. Without it those
 tests skip cleanly.

@@ -2,7 +2,7 @@
 
 Last updated: 2026-08-22
 
-Rust CLI for MeshCore `.mota` firmware containers: build, verify, inspect, serve, delta encode. MeshEnvy fork of [vk496/motatool](https://github.com/vk496/motatool). Default branch: **`envyos/main`**.
+Rust CLI for MeshCore `.mota` firmware containers: build, verify, inspect, serve, delta encode. MeshEnvy fork of [vk496/motatool](https://github.com/vk496/motatool). Release branch: **`envyos/main`**. Integration: **`envyos/dev`** (tracks release until WIP diverges).
 
 ## Releases
 
@@ -36,6 +36,7 @@ make dev-setup                 # optional: detools oracle for delta tests
 | `src/` | CLI + library (encode, verify, serve) |
 | `tests/` | Integration tests |
 | `scripts/changelog.sh` | Release notes extract/check |
+| `scripts/seeder.sh` | USB seeder wrapper (`motatool serve`) |
 | `third_party/detools/` | Test oracle only |
 
 ## Active threads
