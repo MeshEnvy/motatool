@@ -25,7 +25,6 @@ fn opts(fw: Vec<u8>) -> BuildOpts {
         block_size: 1024,
         force: false,
         name_stem: None,
-        base_version: None,
     }
 }
 
@@ -43,10 +42,18 @@ fn full_build_verifies_and_roundtrips() {
     assert_eq!(m.fw_version, 0x0111_0000);
     assert_eq!(m.hw_id_str(), "RAK4631");
     assert_eq!(m.block_count, 3); // 2500 + 56-byte EndF = 2556 → ceil(/1024) = 3
-    assert!(built
-        .suggested_name
-        .starts_with("fw-RAK4631-v1.17.0-full-"));
+    assert!(
+        built
+            .suggested_name
+            .starts_with("fw-RAK4631-1.17.0-full-hwid.RAK4631-"),
+        "{}",
+        built.suggested_name
+    );
     assert!(built.suggested_name.ends_with(".mota"));
+    assert_eq!(
+        motatool::name_mota(&built.bytes, None, None).unwrap(),
+        built.suggested_name
+    );
 }
 
 #[test]

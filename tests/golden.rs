@@ -58,7 +58,6 @@ fn opts(fw: Vec<u8>, base: Vec<u8>, mem: Option<u32>) -> BuildOpts {
         block_size: 1024,
         force: false,
         name_stem: None,
-        base_version: None,
     }
 }
 

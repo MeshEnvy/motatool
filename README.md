@@ -18,6 +18,7 @@ to live in the MeshCore tree, kept **byte-for-byte compatible** with the firmwar
 | `build --base` in-place (nRF52) | ✅ **pure Rust** delta (no runtime detools) — see [Deltas](#deltas) |
 | `verify` | ✅ structure, block hashes, merkle root, image hash, Ed25519 signature |
 | `inspect` | ✅ dump every manifest field |
+| `name` | ✅ apply-identity filename (`hw` + body hashes + mid) |
 | `keygen` | ✅ Ed25519 signing keypair |
 | `serve` (USB serial + WiFi TCP) | ✅ folder relay + pull-to-folder capture + `--seed` warm-start — see [Serve](#serve) |
 
@@ -68,7 +69,11 @@ motatool verify ./motas/*.mota
 motatool verify update.mota --pub signer.key.pub
 
 # dump every manifest field
-motatool inspect ./motas/RAK4631_04D413FD_v1.17.0_full_ABCD1234.mota
+motatool inspect ./motas/fw-rak4631-repeater-slim-0.1.3-full-hwid.RAK4631-to.1D470555F2F8E1A2-mid.E4008E30.mota
+
+# print apply-identity basename (delta needs --fw = target hex/bin)
+motatool name update.mota --name-stem fw-rak4631-repeater-slim-0.1.3
+motatool name delta.mota --fw new.hex --name-stem fw-rak4631-repeater-slim-0.1.3
 
 # make an Ed25519 signing keypair
 motatool keygen --out signer.key   # writes signer.key + signer.key.pub (hex)

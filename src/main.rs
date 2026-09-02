@@ -6,7 +6,7 @@ use motatool::crypto::{ed25519_keygen, load_key32};
 use motatool::endf::{pack_version, target_id_for_env, version_str};
 use motatool::input::read_input;
 use motatool::serve::{open_serial, open_tcp, serve_loop, Folder, SeederCore};
-use motatool::{build, targets, verify, BuildOpts, Codec, Manifest, PatchType};
+use motatool::{build, name_mota, targets, verify, BuildOpts, Codec, Manifest, PatchType};
 
 #[derive(Clone, Copy, ValueEnum)]
 enum CliPatchType {
@@ -33,7 +33,7 @@ use std::sync::Arc;
 #[command(
     name = "motatool",
     version,
-    about = "Build, verify, inspect, and serve MeshCore .mota firmware-update containers.",
+    about = "Build, verify, inspect, name, and serve MeshCore .mota firmware-update containers.",
     long_about = "A .mota is a signed, self-verifying package of a firmware update that MeshCore nodes \
                   fetch over LoRa, block by block. This tool makes those packages, checks them, and (soon) \
                   serves a folder of them to a node."
@@ -51,6 +51,8 @@ enum Command {
     Verify(VerifyArgs),
     /// Print every field of a .mota's manifest.
     Inspect(InspectArgs),
+    /// Print the apply-identity filename for an existing .mota.
+    Name(NameArgs),
     /// Generate an Ed25519 signing keypair.
     Keygen(KeygenArgs),
     /// Serve a folder of .mota to a node over USB serial or WiFi, and capture pull-to-folder downloads.
@@ -102,12 +104,21 @@ struct BuildArgs {
     /// Exact output path (overrides --out-dir and the auto-name).
     #[arg(long)]
     out: Option<String>,
-    /// Filename prefix, e.g. `fw-rak4631-repeater-slim-v0.2.0` → `…-full-{mid8}.mota`.
+    /// Filename prefix, e.g. `fw-rak4631-repeater-slim-0.2.0` → `…-full-hwid.{hw}-to.{body}-mid.{mid}.mota`.
     #[arg(long = "name-stem")]
     name_stem: Option<String>,
-    /// Release version of `--base` for the delta filename (e.g. `v0.1.2`). Defaults to EndF.
-    #[arg(long = "base-version")]
-    base_version: Option<String>,
+}
+
+#[derive(Args)]
+struct NameArgs {
+    /// Existing .mota to name.
+    file: String,
+    /// Target firmware (hex/bin). Required for deltas (new-body-hash is not in the container).
+    #[arg(long)]
+    fw: Option<String>,
+    /// Filename prefix, e.g. `fw-rak4631-repeater-slim-0.1.3`.
+    #[arg(long = "name-stem")]
+    name_stem: Option<String>,
 }
 
 #[derive(Args)]
@@ -167,6 +178,7 @@ fn main() -> ExitCode {
         Command::Build(a) => cmd_build(a),
         Command::Verify(a) => return cmd_verify(a),
         Command::Inspect(a) => cmd_inspect(a),
+        Command::Name(a) => cmd_name(a),
         Command::Keygen(a) => cmd_keygen(a),
         Command::Serve(a) => cmd_serve(a),
     };
@@ -219,7 +231,6 @@ fn cmd_build(a: BuildArgs) -> Result<()> {
         block_size: a.block_size,
         force: a.force,
         name_stem: a.name_stem,
-        base_version: a.base_version,
     })?;
 
     // sanity: our own output must verify.
@@ -399,6 +410,14 @@ fn cmd_inspect(a: InspectArgs) -> Result<()> {
         }
     );
     println!("leaves[]       : {} x 4 bytes", m.block_count);
+    Ok(())
+}
+
+fn cmd_name(a: NameArgs) -> Result<()> {
+    let blob = std::fs::read(&a.file).with_context(|| format!("cannot read {}", a.file))?;
+    let fw = a.fw.as_deref().map(read_input).transpose()?;
+    let name = name_mota(&blob, fw.as_deref(), a.name_stem.as_deref())?;
+    println!("{name}");
     Ok(())
 }
 

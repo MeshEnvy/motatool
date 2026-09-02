@@ -15,7 +15,7 @@ pub mod serve;
 pub mod targets;
 pub mod verify;
 
-pub use build::{build, BuildOpts, Built};
+pub use build::{build, name_mota, BuildOpts, Built};
 pub use encode::PatchType;
 pub use format::{Codec, FwIdent, Manifest};
 pub use verify::verify;

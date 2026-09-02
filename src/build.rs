@@ -11,7 +11,7 @@ use crate::endf::{ensure_endf, has_endf, parse_ident, version_str};
 use crate::format::*;
 use crate::merkle;
 use crate::targets;
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
 
 pub struct BuildOpts {
     pub fw: Vec<u8>,
@@ -25,10 +25,8 @@ pub struct BuildOpts {
     pub sign_seed: Option<[u8; 32]>,
     pub block_size: u32,
     pub force: bool,
-    /// Filename prefix, e.g. `fw-rak4631-repeater-slim-v0.2.0`.
+    /// Filename prefix, e.g. `fw-rak4631-repeater-slim-0.2.0`.
     pub name_stem: Option<String>,
-    /// Release version of `--base` for the delta filename (e.g. `v0.1.2`). EndF if unset.
-    pub base_version: Option<String>,
 }
 
 pub struct Built {
@@ -47,16 +45,15 @@ pub fn build(o: &BuildOpts) -> Result<Built> {
     };
 
     // The target image (EndF-trailed) is what image_size/image_hash always describe.
-    let (image, _body_hash) = ensure_endf(&o.fw, &ident);
+    let (image, new_body_hash) = ensure_endf(&o.fw, &ident);
 
     // Full: the payload IS the image. Delta: the payload is a detools patch base_image -> image, and
     // base_hash pins the running image it applies to (the device checks it against its EndF body_hash).
-    let (codec, payload, base_hash, base_ident, base_mid8) = match &o.base {
-        None => (Codec::Full, image.clone(), [0u8; 8], None, None),
+    let (codec, payload, base_hash) = match &o.base {
+        None => (Codec::Full, image.clone(), [0u8; 8]),
         Some(base_fw) => {
-            let (codec, payload, base_hash, base_ident, base_mid8) =
-                build_delta(o, &ident, &image, base_fw)?;
-            (codec, payload, base_hash, Some(base_ident), Some(base_mid8))
+            let (codec, payload, base_hash) = build_delta(o, &ident, &image, base_fw)?;
+            (codec, payload, base_hash)
         }
     };
     let is_full = codec == Codec::Full;
@@ -106,13 +103,17 @@ pub fn build(o: &BuildOpts) -> Result<Built> {
     bytes.extend_from_slice(&TRAILER);
 
     let manifest = Manifest::parse(&bytes)?; // our own output must parse
+    let old_body = if codec == Codec::Full {
+        None
+    } else {
+        Some(base_hash)
+    };
     let suggested_name = suggested_name(
-        &ident,
-        &root,
-        base_ident.as_ref(),
-        base_mid8.as_ref(),
         o.name_stem.as_deref(),
-        o.base_version.as_deref(),
+        &ident,
+        &new_body_hash,
+        &root,
+        old_body.as_ref(),
     );
     Ok(Built {
         bytes,
@@ -128,7 +129,7 @@ fn build_delta(
     ident: &FwIdent,
     image: &[u8],
     base_fw: &[u8],
-) -> Result<(Codec, Vec<u8>, [u8; 8], FwIdent, [u8; 4])> {
+) -> Result<(Codec, Vec<u8>, [u8; 8])> {
     // The delta must apply to the device's *actual* running image, which carries its own EndF trailer.
     // Requiring one here stops a silently-wrong patch built against a re-stamped base (it would fail the
     // on-device base_hash check anyway, but failing early is clearer).
@@ -183,8 +184,7 @@ fn build_delta(
             (Codec::DetoolsInplace, patch)
         }
     };
-    let base_mid8 = merkle::root(&merkle::leaf_hashes(&base_image, o.block_size as usize));
-    Ok((codec, patch, base_hash, base_ident, base_mid8))
+    Ok((codec, patch, base_hash))
 }
 
 /// Derive the in-place apply window from the target's staging ceiling and the patch size. Iterates
@@ -241,43 +241,81 @@ fn block_size_log2(bs: u32) -> u8 {
     (u32::BITS - 1 - bs.max(1).leading_zeros()) as u8
 }
 
-/// Full: `{stem}-full-{mid8}.mota`
-/// Delta: `{stem}-delta-from-{basever}-{base8}.mota`
-///
-/// `mid8` is this container's payload merkle root. `base8` is the merkle root of the
-/// previous image packed as a full `.mota` (same block size), so the delta filename
-/// matches that version's `…-full-{base8}.mota`.
-fn suggested_name(
-    ident: &FwIdent,
-    root: &[u8; 4],
-    base_ident: Option<&FwIdent>,
-    base_mid8: Option<&[u8; 4]>,
-    name_stem: Option<&str>,
-    base_version: Option<&str>,
-) -> String {
-    let stem = name_stem.map(str::to_string).unwrap_or_else(|| {
-        let hw = if ident.hw_id.is_empty() {
-            "fw".to_string()
-        } else {
-            ident.hw_id.replace('_', "-")
-        };
-        format!("fw-{hw}-v{}", version_str(ident.fw_version))
-    });
-    match (base_ident, base_mid8) {
-        (Some(base), Some(mid)) => {
-            let from = base_version
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(|s| {
-                    if s.starts_with('v') || s.starts_with('V') {
-                        s.to_string()
-                    } else {
-                        format!("v{s}")
-                    }
-                })
-                .unwrap_or_else(|| format!("v{}", version_str(base.fw_version)));
-            format!("{stem}-delta-from-{from}-{}.mota", hex::encode_upper(mid))
-        }
-        _ => format!("{stem}-full-{}.mota", hex::encode_upper(root)),
+/// Apply-string token for filenames. Empty hw_id → `none` so field count stays fixed.
+pub fn hw_filename_token(hw: &str) -> &str {
+    if hw.is_empty() {
+        "none"
+    } else {
+        hw
     }
+}
+
+/// Full: `{stem}-full-hwid.{hw}-to.{new-body16}-mid.{mid8}.mota`
+/// Delta: `{stem}-delta-hwid.{hw}-from.{old-body16}-to.{new-body16}-mid.{mid8}.mota`
+pub fn suggested_name(
+    name_stem: Option<&str>,
+    ident: &FwIdent,
+    new_body: &[u8; 8],
+    this_mid: &[u8; 4],
+    old_body: Option<&[u8; 8]>,
+) -> String {
+    let hw = hw_filename_token(&ident.hw_id);
+    let stem = name_stem
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("fw-{hw}-{}", version_str(ident.fw_version)));
+    let new_hx = hex::encode_upper(new_body);
+    let mid_hx = hex::encode_upper(this_mid);
+    match old_body {
+        Some(old) => format!(
+            "{stem}-delta-hwid.{hw}-from.{}-to.{new_hx}-mid.{mid_hx}.mota",
+            hex::encode_upper(old)
+        ),
+        None => format!("{stem}-full-hwid.{hw}-to.{new_hx}-mid.{mid_hx}.mota"),
+    }
+}
+
+fn body_hash_from_endf_image(image: &[u8]) -> Result<[u8; 8]> {
+    if !has_endf(image) {
+        bail!("firmware image has no EndF trailer (need body_hash)");
+    }
+    let t = &image[image.len() - ENDF_LEN..];
+    Ok(arr::<8>(t, 8))
+}
+
+/// Suggested filename for an existing `.mota`. Deltas need `--fw` (target image) because
+/// `new-body-hash` is not in the container (`image_hash` is sha256 of the full trailed image).
+pub fn name_mota(blob: &[u8], target_fw: Option<&[u8]>, name_stem: Option<&str>) -> Result<String> {
+    let m = Manifest::parse(blob)?;
+    let ident = FwIdent {
+        fw_version: m.fw_version,
+        target_id: m.target_id,
+        hw_id: m.hw_id_str(),
+    };
+    let new_body = if m.is_full() {
+        let off = m.payload_off();
+        let payload = blob
+            .get(off..off + m.payload_size as usize)
+            .ok_or_else(|| anyhow::anyhow!("truncated full payload"))?;
+        body_hash_from_endf_image(payload)?
+    } else {
+        let fw = target_fw.ok_or_else(|| {
+            anyhow::anyhow!("delta .mota needs --fw (target hex/bin) for new-body-hash")
+        })?;
+        let (_image, hash) = ensure_endf(fw, &ident);
+        hash
+    };
+    let old_body = if m.is_full() {
+        None
+    } else {
+        Some(m.base_hash)
+    };
+    Ok(suggested_name(
+        name_stem,
+        &ident,
+        &new_body,
+        &m.merkle_root,
+        old_body.as_ref(),
+    ))
 }
