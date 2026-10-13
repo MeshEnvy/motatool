@@ -160,6 +160,7 @@ fn build_delta(
                 bail!("in-place: --segment-size must be non-zero");
             }
             let stage_ceiling = targets::nrf52_stage_ceiling_for_target(ident.target_id);
+            let app_base = targets::nrf52_app_base_for_target(ident.target_id);
             let patch = match o.inplace_memory {
                 Some(m) => {
                     if m == 0 || m % o.segment_size != 0 {
@@ -175,6 +176,7 @@ fn build_delta(
                         &base_image,
                         image,
                         stage_ceiling,
+                        app_base,
                         o.segment_size,
                         o.block_size,
                     )?
@@ -193,11 +195,12 @@ fn compute_inplace_memory(
     from: &[u8],
     to: &[u8],
     stage_ceiling: u32,
+    app_base: u32,
     segment_size: u32,
     block_size: u32,
 ) -> Result<(u32, Vec<u8>)> {
     let to_len = to.len() as u32;
-    let max_memory = stage_ceiling - NRF52_APP_BASE;
+    let max_memory = stage_ceiling - app_base;
     if to_len > max_memory {
         bail!(
             "target image {to_len} B exceeds max apply window {max_memory} B for ceiling 0x{stage_ceiling:X}"
@@ -208,7 +211,7 @@ fn compute_inplace_memory(
     let est_leaves = 64u32;
     let est_mota = (HEADER_LEN + MFL + est_leaves as usize * 4 + est_patch as usize + TRAILER_LEN) as u32;
     let mut memory = nrf52_align_down(
-        nrf52_mota_stage_start(est_mota, stage_ceiling) - NRF52_APP_BASE,
+        nrf52_mota_stage_start(est_mota, stage_ceiling) - app_base,
         segment_size,
     );
     if memory == 0 {
@@ -225,7 +228,7 @@ fn compute_inplace_memory(
         let leaves = merkle::leaf_hashes(&patch, block_size as usize);
         let total = (HEADER_LEN + MFL + leaves.len() * 4 + patch.len() + TRAILER_LEN) as u32;
         let new_memory = nrf52_align_down(
-            nrf52_mota_stage_start(total, stage_ceiling) - NRF52_APP_BASE,
+            nrf52_mota_stage_start(total, stage_ceiling) - app_base,
             segment_size,
         );
         if new_memory == memory {

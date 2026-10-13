@@ -17,6 +17,23 @@ pub fn label(target_id: u32) -> &'static str {
     env_name(target_id).unwrap_or("N/A")
 }
 
+/// SoftDevice end / app flash origin. RAK4631, T096, and WisMesh Tag are S140 v6 at `0x26000`.
+/// Seeed XIAO nRF52840 and SenseCAP Solar are S140 v7.3.0 at `0x27000`.
+pub fn nrf52_app_base(env_name: &str) -> u32 {
+    if env_name.starts_with("Xiao_nrf52") || env_name.starts_with("SenseCap_Solar") {
+        0x0002_7000
+    } else {
+        crate::format::NRF52_APP_BASE
+    }
+}
+
+/// App flash origin for a known OTA target, or the S140 v6 base when the env is unknown.
+pub fn nrf52_app_base_for_target(target_id: u32) -> u32 {
+    env_name(target_id)
+        .map(nrf52_app_base)
+        .unwrap_or(crate::format::NRF52_APP_BASE)
+}
+
 /// nRF52 staging ceiling for a PlatformIO env name. Companion builds stage below ExtraFS; other roles
 /// (repeater, room server, …) reclaim up to InternalFS start.
 pub fn nrf52_stage_ceiling(env_name: &str) -> u32 {
@@ -513,6 +530,7 @@ static TABLE: &[(u32, &str)] = &[
     (0xe90a6e74, "Xiao_nrf52_companion_radio_usb"),
     (0x833e5cdc, "Xiao_nrf52_kiss_modem"),
     (0x93145fbb, "Xiao_nrf52_repeater"),
+    (0xe34dba83, "Xiao_nrf52_repeater_slim"),
     (0x33a154ff, "Xiao_nrf52_room_server"),
     (0x6658b418, "Xiao_S3_companion_radio_ble"),
     (0x964f4f5c, "Xiao_S3_companion_radio_usb"),
@@ -543,5 +561,13 @@ mod tests {
         assert_eq!(nrf52_stage_ceiling("RAK_4631_repeater"), 0x000ED_000);
         assert_eq!(nrf52_stage_ceiling_for_target(0x04d413fd), 0x000ED_000);
         assert_eq!(nrf52_stage_ceiling_for_target(0x9f4d58ac), 0x000D_4000);
+    }
+
+    #[test]
+    fn nrf52_app_base_s140_v7() {
+        assert_eq!(nrf52_app_base("Xiao_nrf52_repeater_slim"), 0x0002_7000);
+        assert_eq!(nrf52_app_base("SenseCap_Solar_repeater_slim"), 0x0002_7000);
+        assert_eq!(nrf52_app_base("RAK_4631_repeater_slim"), 0x0002_6000);
+        assert_eq!(nrf52_app_base_for_target(0xe34dba83), 0x0002_7000);
     }
 }
